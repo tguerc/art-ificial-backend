@@ -8,7 +8,8 @@ class ObraCreate(BaseModel):
     descripcion: str
     tipoArte: str
     prompt: str
-
+    imagen: Optional[str] = None
+    
 class ObraSimple(BaseModel):
     id: str
     nombre: str

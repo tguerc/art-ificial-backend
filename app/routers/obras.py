@@ -1,3 +1,7 @@
+import base64
+import os
+import requests
+import time
 from fastapi import APIRouter, Depends, HTTPException, Path
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +17,8 @@ from app.schemas.obra import ObraCreate, ObraOut, ObraSimple
 from app.services.generador import generar_imagen
 from app.utils.jwt import verificar_token
 from app.utils.auth import get_current_user, get_current_user_optional
+from fastapi.responses import FileResponse
+
 
 router = APIRouter()
 oauth2_scheme = HTTPBearer()
@@ -20,19 +26,79 @@ oauth2_scheme = HTTPBearer()
 class ValoracionRequest(BaseModel):
     puntuacion: int
 
-
 async def get_db():
     async with SessionLocal() as session:
         yield session
 
 
+
+
+
+from fastapi import Query
+
 @router.post("/generar")
-async def generar_obra(obra: ObraCreate, db: AsyncSession = Depends(get_db), usuario=Depends(get_current_user)):
+async def generar_obra(
+    obra: ObraCreate,
+    db: AsyncSession = Depends(get_db),
+    usuario: Usuario = Depends(get_current_user),
+    solo_generar: bool = Query(False, description="Si es true, solo genera la imagen sin guardarla en DB")
+):
     if usuario is None:
         raise HTTPException(status_code=401, detail="Usuario no autenticado")
 
-    archivo = generar_imagen(obra.prompt)
+    print("📥 Datos recibidos:", obra.dict())
+    print("🎯 solo_generar:", solo_generar)
 
+    # ✅ Subir dos niveles desde app/routers hasta la raíz del proyecto
+    BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    output_dir = os.path.join(BASE_DIR, "output")
+    os.makedirs(output_dir, exist_ok=True)
+
+    timestamp = int(time.time())
+    file_name = f"obra_{timestamp}.jpg"
+    file_path = os.path.join(output_dir, file_name)
+
+    # Manejo de imagen
+    if obra.imagen and obra.imagen.strip():
+        if obra.imagen.startswith("data:image"):
+            print("🖼️ Guardando imagen desde Base64")
+            header, b64data = obra.imagen.split(",", 1)
+            image_bytes = base64.b64decode(b64data)
+            with open(file_path, "wb") as f:
+                f.write(image_bytes)
+
+        elif obra.imagen.startswith("http"):
+            if "localhost:8000/output/" in obra.imagen:
+                print("📂 Copiando imagen local directamente (sin HTTP)")
+                local_name = obra.imagen.split("/output/")[-1]
+                local_path = os.path.join(output_dir, local_name)
+                if not os.path.exists(local_path):
+                    raise HTTPException(status_code=404, detail="Imagen local no encontrada")
+                with open(local_path, "rb") as src, open(file_path, "wb") as dest:
+                    dest.write(src.read())
+            else:
+                print("🌐 Descargando imagen externa:", obra.imagen)
+                response = requests.get(obra.imagen)
+                if response.status_code != 200:
+                    raise HTTPException(status_code=400, detail="No se pudo descargar la imagen desde la URL")
+                with open(file_path, "wb") as f:
+                    f.write(response.content)
+    else:
+        print("⚠️ Usando robot.jpg por defecto")
+        robot_path = os.path.join(output_dir, "robot.jpg")
+        if not os.path.exists(robot_path):
+            raise HTTPException(status_code=404, detail="robot.jpg no encontrado en output")
+        file_name = "robot.jpg"
+        file_path = robot_path
+
+    archivo = f"/output/{file_name}"
+
+    # ✅ Si solo queremos generar, devolvemos la URL y no guardamos en DB
+    if solo_generar:
+        print("🛑 Solo generando imagen, no guardando en DB.")
+        return {"mensaje": "Imagen generada temporalmente", "archivo": f"http://localhost:8000{archivo}"}
+
+    # ✅ Si es publicación normal, guardar en DB
     nueva = Obra(
         nombre=obra.nombre,
         descripcion=obra.descripcion,
@@ -45,7 +111,9 @@ async def generar_obra(obra: ObraCreate, db: AsyncSession = Depends(get_db), usu
     await db.commit()
     await db.refresh(nueva)
 
-    return {"mensaje": "Obra generada", "archivo": nueva.archivoJPG}
+    print("✅ Obra guardada con archivo:", archivo)
+    return {"mensaje": "Obra generada y guardada", "archivo": f"http://localhost:8000{archivo}"}
+
 
 
 @router.get("/mis-obras", response_model=List[ObraOut])
@@ -191,3 +259,14 @@ async def obtener_todas_las_obras(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Obra).order_by(Obra.fecha.desc()))
     obras = result.scalars().all()
     return obras
+
+# 📌 Servir imágenes desde output con CORS habilitado
+@router.get("/imagenes/{nombre}")
+async def obtener_imagen(nombre: str):
+    BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    file_path = os.path.join(BASE_DIR, "output", nombre)
+
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Imagen no encontrada")
+
+    return FileResponse(file_path, media_type="image/jpeg", headers={"Access-Control-Allow-Origin": "*"})

@@ -1,11 +1,21 @@
-from fastapi import FastAPI
-from app.routers import usuarios, obras
-from fastapi.staticfiles import StaticFiles
+# Imports estándar
 import os
-from fastapi.middleware.cors import CORSMiddleware
 import logging
 from pathlib import Path
 
+# Imports de terceros
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv  # Para leer .env
+
+# Imports internos
+from app.routers import usuarios, obras
+
+# Cargar variables de entorno desde .env
+load_dotenv()
+
+# Inicialización de la aplicación FastAPI
 app = FastAPI()
 
 # Incluir routers
@@ -15,20 +25,22 @@ app.include_router(obras.router, prefix="/obras")
 # Configurar logging
 logging.basicConfig(level=logging.DEBUG)
 
-# Configuración de CORS
+# Configuración de CORS con variable de entorno
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Directorio de salida
+# Directorio de salida para imágenes generadas
 output_path = Path(__file__).resolve().parents[1] / "output"
 os.makedirs(output_path, exist_ok=True)
 
-# ✅ Montar carpeta estática para servir imágenes
+# Montar carpeta estática para servir imágenes
 app.mount("/imagenes", StaticFiles(directory=output_path), name="imagenes")
 
-# 🚀 Ejecutar con: uvicorn app.main:app --reload
+# Ejecutar con: uvicorn app.main:app --reload

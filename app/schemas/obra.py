@@ -35,7 +35,7 @@ class ObraOut(BaseModel):
     autor_nombre: str
     promedio_valoracion: Optional[float] = None
     cantidad_valoraciones: Optional[int] = 0
-    ya_valorada: Optional[bool] = False  # 👈 nuevo campo para controlar el frontend
+    ya_valorada: Optional[bool] = False
 
     class Config:
         from_attributes = True

@@ -1,9 +1,11 @@
+# Imports estándar
 from shutil import copyfile
 from uuid import uuid4
 from pathlib import Path
 
+# Genera una imagen duplicando un archivo existente (robot.jpg) y devuelve la ruta relativa
 def generar_imagen(prompt: str) -> str:
-    base_dir = Path(__file__).resolve().parents[2]  # ✅ llega a art-ificial-backend
+    base_dir = Path(__file__).resolve().parents[2]  # Llega a la raíz del proyecto
     origen = base_dir / "output" / "robot.jpg"
 
     if not origen.exists():

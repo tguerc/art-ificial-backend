@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv  # Para leer .env
+from dotenv import load_dotenv
 
 # Imports internos
 from app.routers import usuarios, obras
@@ -25,15 +25,18 @@ app.include_router(obras.router, prefix="/obras")
 # Configurar logging
 logging.basicConfig(level=logging.DEBUG)
 
-# Configuración de CORS con variable de entorno
-allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+# Configuración de CORS
+allowed_origins = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost:3000,https://art-ificial-frontend-v2.vercel.app"
+).split(",")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=[origin.strip() for origin in allowed_origins],  # Limpiar espacios
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"],  # Permitir GET, POST, OPTIONS, etc.
+    allow_headers=["*"],  # Permitir todos los encabezados (incluido Authorization)
 )
 
 # Directorio de salida para imágenes generadas

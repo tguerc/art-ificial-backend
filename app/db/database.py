@@ -6,20 +6,14 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 # Cargar variables de entorno
 load_dotenv()
 
-# Detectar entorno
-ENVIRONMENT = os.getenv("ENVIRONMENT", "local").lower()
-
-if ENVIRONMENT == "render":
-    DATABASE_URL = os.getenv("DATABASE_URL_INTERNAL")
-    print("🔗 Usando DATABASE_URL interna (Render)")
-else:
-    DATABASE_URL = os.getenv("DATABASE_URL_EXTERNAL")
-    print("🔗 Usando DATABASE_URL externa (Local)")
+# Usar siempre la URL externa
+DATABASE_URL = os.getenv("DATABASE_URL")
+print(f"🔗 Conectando a la base de datos externa en Render")
 
 # Crear motor asincrónico
 engine = create_async_engine(
     DATABASE_URL,
-    echo=True
+    echo=True,  # Mostrar logs SQL en consola
 )
 
 # Sesión de base de datos asincrónica

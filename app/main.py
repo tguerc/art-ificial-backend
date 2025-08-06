@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 
 # Imports internos
 from app.routers import usuarios, obras
+from app.db.database import engine, Base
 
 # Cargar variables de entorno desde .env
 load_dotenv()
@@ -30,6 +31,13 @@ allowed_origins = os.getenv(
     "ALLOWED_ORIGINS",
     "http://localhost:3000,https://art-ificial-frontend-v2.vercel.app"
 ).split(",")
+
+@app.on_event("startup")
+async def crear_tablas_si_no_existen():
+    async with engine.begin() as conn:
+        print("🛠️ Creando tablas si no existen...")
+        await conn.run_sync(Base.metadata.create_all)
+
 
 app.add_middleware(
     CORSMiddleware,

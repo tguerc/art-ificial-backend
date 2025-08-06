@@ -4,6 +4,7 @@ import os
 import time
 from typing import List, Optional
 from pathlib import Path
+from math import floor
 
 # Imports de terceros
 import requests
@@ -119,7 +120,10 @@ async def generar_obra(
 
 # Endpoint: Obtener obras del usuario autenticado
 @router.get("/mis-obras", response_model=List[ObraOut])
-async def mis_obras(current_user: Usuario = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def mis_obras(
+    current_user: Usuario = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
     stmt = (
         select(
             Obra,
@@ -138,10 +142,15 @@ async def mis_obras(current_user: Usuario = Depends(get_current_user), db: Async
 
     obras = []
     for obra, autor_nombre, promedio, cantidad in filas:
+        # 🔥 Truncar a 2 decimales sin redondear
+        promedio_truncado = (
+            floor(promedio * 100) / 100 if promedio is not None else None
+        )
+
         obra_dict = {
             **obra.__dict__,
             "autor_nombre": autor_nombre,
-            "promedio_valoracion": round(promedio, 2) if promedio else None,
+            "promedio_valoracion": promedio_truncado,
             "cantidad_valoraciones": cantidad
         }
         obras.append(obra_dict)
@@ -205,10 +214,15 @@ async def muro_publico(
                 ya_valorada = True
                 puntuacion_usuario = valoracion.puntuacion
 
+        # 🔥 Truncar a 2 decimales sin redondear
+        promedio_truncado = (
+            floor(promedio * 100) / 100 if promedio is not None else None
+        )
+
         obras.append({
             **obra.__dict__,
             "autor_nombre": autor_nombre,
-            "promedio_valoracion": round(promedio, 2) if promedio else None,
+            "promedio_valoracion": promedio_truncado,
             "cantidad_valoraciones": cantidad,
             "ya_valorada": ya_valorada,
             "puntuacion_usuario": puntuacion_usuario

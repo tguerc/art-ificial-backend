@@ -12,3 +12,4 @@ google-auth
 python-multipart
 requests
 python-dotenv
+asyncpg

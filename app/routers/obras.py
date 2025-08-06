@@ -58,56 +58,27 @@ async def generar_obra(
     if usuario is None:
         raise HTTPException(status_code=401, detail="Usuario no autenticado")
 
-    # Directorio base del proyecto y carpeta output
-    BASE_DIR = Path(__file__).resolve().parents[2]
-    output_dir = BASE_DIR / "output"
-    output_dir.mkdir(exist_ok=True)
+    if not obra.imagen or not obra.imagen.startswith("data:image"):
+        raise HTTPException(status_code=400, detail="Imagen inválida o ausente")
 
-    timestamp = int(time.time())
-    file_name = f"obra_{timestamp}.jpg"
-    file_path = output_dir / file_name
+    # Extraer contenido base64 desde el string "data:image/jpeg;base64,..."
+    try:
+        header, b64data = obra.imagen.split(",", 1)
+        base64.b64decode(b64data)  # Validar base64
+    except Exception:
+        raise HTTPException(status_code=400, detail="Base64 malformado o ilegible")
 
-    # Manejo de la imagen (Base64, URL o por defecto)
-    if obra.imagen and obra.imagen.strip():
-        if obra.imagen.startswith("data:image"):
-            header, b64data = obra.imagen.split(",", 1)
-            image_bytes = base64.b64decode(b64data)
-            with open(file_path, "wb") as f:
-                f.write(image_bytes)
-
-        elif obra.imagen.startswith("http"):
-            if "localhost:8000/output/" in obra.imagen:
-                local_name = obra.imagen.split("/output/")[-1]
-                local_path = output_dir / local_name
-                if not local_path.exists():
-                    raise HTTPException(status_code=404, detail="Imagen local no encontrada")
-                with open(local_path, "rb") as src, open(file_path, "wb") as dest:
-                    dest.write(src.read())
-            else:
-                response = requests.get(obra.imagen)
-                if response.status_code != 200:
-                    raise HTTPException(status_code=400, detail="No se pudo descargar la imagen desde la URL")
-                with open(file_path, "wb") as f:
-                    f.write(response.content)
-    else:
-        robot_path = output_dir / "robot.jpg"
-        if not robot_path.exists():
-            raise HTTPException(status_code=404, detail="robot.jpg no encontrado en output")
-        file_name = "robot.jpg"
-        file_path = robot_path
-
-    archivo = f"/output/{file_name}"
-
-    # Solo generar sin guardar en DB
     if solo_generar:
-        return {"mensaje": "Imagen generada temporalmente", "archivo": f"{API_BASE_URL}{archivo}"}
+        return {
+            "mensaje": "Imagen generada temporalmente",
+            "archivo": obra.imagen  # ya contiene el "data:image/jpeg;base64,..."
+        }
 
-    # Guardar obra en la base de datos
     nueva = Obra(
         nombre=obra.nombre,
         descripcion=obra.descripcion,
         tipoArte=obra.tipoArte,
-        archivoJPG=archivo,
+        archivoJPG=b64data,  # Guardamos solo el contenido sin el encabezado
         publicada=True,
         autor_id=usuario.id
     )
@@ -115,7 +86,10 @@ async def generar_obra(
     await db.commit()
     await db.refresh(nueva)
 
-    return {"mensaje": "Obra generada y guardada", "archivo": f"{API_BASE_URL}{archivo}"}
+    return {
+        "mensaje": "Obra generada y guardada",
+        "archivo": f"data:image/jpeg;base64,{b64data}"
+    }
 
 
 # Endpoint: Obtener obras del usuario autenticado
@@ -138,25 +112,19 @@ async def mis_obras(
     )
 
     result = await db.execute(stmt)
-    filas = result.all()
 
     obras = []
-    for obra, autor_nombre, promedio, cantidad in filas:
-        # 🔥 Truncar a 2 decimales sin redondear
-        promedio_truncado = (
-            floor(promedio * 100) / 100 if promedio is not None else None
-        )
-
-        obra_dict = {
+    for obra, autor_nombre, promedio, cantidad in result.all():
+        promedio_truncado = floor(promedio * 100) / 100 if promedio is not None else None
+        obras.append({
             **obra.__dict__,
+            "archivoJPG": f"data:image/jpeg;base64,{obra.archivoJPG}",
             "autor_nombre": autor_nombre,
             "promedio_valoracion": promedio_truncado,
             "cantidad_valoraciones": cantidad
-        }
-        obras.append(obra_dict)
+        })
 
     return obras
-
 
 # Endpoint: Cambiar visibilidad de una obra
 @router.patch("/{id}/publicar")
@@ -179,7 +147,7 @@ async def cambiar_visibilidad(id: str, body: dict, db: AsyncSession = Depends(ge
 @router.get("/muro", response_model=List[ObraOut])
 async def muro_publico(
     db: AsyncSession = Depends(get_db),
-    usuario: Optional[Usuario] = Depends(get_current_user_optional)  # Usuario opcional
+    usuario: Optional[Usuario] = Depends(get_current_user_optional)
 ):
     stmt = (
         select(
@@ -192,7 +160,7 @@ async def muro_publico(
         .outerjoin(Valoracion, Valoracion.obra_id == Obra.id)
         .where(Obra.publicada == True)
         .group_by(Obra.id, Usuario.userName)
-        .order_by(Obra.fecha.desc())  # ✅ Ordenar por fecha (más recientes primero)
+        .order_by(Obra.fecha.desc())
     )
 
     result = await db.execute(stmt)
@@ -214,13 +182,11 @@ async def muro_publico(
                 ya_valorada = True
                 puntuacion_usuario = valoracion.puntuacion
 
-        # 🔥 Truncar a 2 decimales sin redondear
-        promedio_truncado = (
-            floor(promedio * 100) / 100 if promedio is not None else None
-        )
+        promedio_truncado = floor(promedio * 100) / 100 if promedio is not None else None
 
         obras.append({
             **obra.__dict__,
+            "archivoJPG": f"data:image/jpeg;base64,{obra.archivoJPG}",
             "autor_nombre": autor_nombre,
             "promedio_valoracion": promedio_truncado,
             "cantidad_valoraciones": cantidad,

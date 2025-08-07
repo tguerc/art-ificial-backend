@@ -16,3 +16,4 @@ asyncpg
 alembic
 aiofiles
 pydantic-settings
+cloudinary

@@ -1,16 +1,16 @@
 # Imports estándar
-import base64
 import os
 import time
 from typing import List, Optional
-from pathlib import Path
 from math import floor
 
 # Imports de terceros
+import cloudinary
+import cloudinary.uploader
 import requests
-from fastapi import APIRouter, Depends, HTTPException, Path as FastPath, Query
-from fastapi.responses import FileResponse
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import RedirectResponse
+from fastapi.security import HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func
@@ -30,73 +30,72 @@ from app.utils.auth import get_current_user, get_current_user_optional
 # Cargar variables de entorno
 load_dotenv()
 
-# Configuración del router
+# Cloudinary configuración
+cloudinary.config(
+    cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
+    api_key=os.getenv("CLOUDINARY_API_KEY"),
+    api_secret=os.getenv("CLOUDINARY_API_SECRET"),
+    secure=True,
+)
+
 router = APIRouter()
 oauth2_scheme = HTTPBearer()
-
-# Base URL de la API (para devolver rutas correctas)
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 
-# Esquemas de request
+
 class ValoracionRequest(BaseModel):
     puntuacion: int
 
-# Dependencia para obtener la sesión de la base de datos
+
 async def get_db():
     async with SessionLocal() as session:
         yield session
 
 
-# Endpoint: Generar una obra
+# 🚀 Generar y subir imagen
 @router.post("/generar")
 async def generar_obra(
     obra: ObraCreate,
     db: AsyncSession = Depends(get_db),
     usuario: Usuario = Depends(get_current_user),
-    solo_generar: bool = Query(False, description="Si es true, solo genera la imagen sin guardarla en DB")
+    solo_generar: bool = Query(False)
 ):
     if usuario is None:
         raise HTTPException(status_code=401, detail="Usuario no autenticado")
 
-    BASE_DIR = Path(__file__).resolve().parents[2]
-    output_dir = BASE_DIR / "output"
-    output_dir.mkdir(exist_ok=True)
+    # Obtener imagen desde URL
+    if not obra.imagen or not obra.imagen.strip().startswith("http"):
+        raise HTTPException(status_code=400, detail="Debe enviarse una URL válida")
 
-    timestamp = int(time.time())
-    file_name = f"obra_{timestamp}.jpg"
-    file_path = output_dir / file_name
+    try:
+        response = requests.get(obra.imagen)
+        if response.status_code != 200:
+            raise HTTPException(status_code=400, detail="No se pudo descargar la imagen")
 
-    # Descargar o copiar imagen (NO se acepta más base64)
-    if obra.imagen and obra.imagen.strip():
-        if obra.imagen.startswith("http"):
-            response = requests.get(obra.imagen)
-            if response.status_code != 200:
-                raise HTTPException(status_code=400, detail="No se pudo descargar la imagen desde la URL")
-            with open(file_path, "wb") as f:
-                f.write(response.content)
-        else:
-            raise HTTPException(status_code=400, detail="La imagen debe ser una URL válida")
-    else:
-        # Usar imagen por defecto
-        robot_path = output_dir / "robot.jpg"
-        if not robot_path.exists():
-            raise HTTPException(status_code=404, detail="robot.jpg no encontrado en output")
-        file_name = "robot.jpg"
-        file_path = robot_path
+        # Subir a Cloudinary con timestamp
+        timestamp = int(time.time())
+        nombre_cloud = f"obra_{timestamp}"
 
-    imagen_url = f"{API_BASE_URL}/imagenes/{file_name}"
+        result = cloudinary.uploader.upload(
+            response.content,
+            public_id=nombre_cloud,
+            resource_type="image",
+            folder="artificial",
+            overwrite=True
+        )
+        image_url = result["secure_url"]
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error subiendo a Cloudinary: {e}")
 
     if solo_generar:
-        return {
-            "mensaje": "Imagen generada temporalmente",
-            "archivo": imagen_url
-        }
+        return {"mensaje": "Imagen generada temporalmente", "archivo": image_url}
 
     nueva = Obra(
         nombre=obra.nombre,
         descripcion=obra.descripcion,
         tipoArte=obra.tipoArte,
-        archivoJPG=file_name,
+        archivoJPG=image_url,
         publicada=True,
         autor_id=usuario.id
     )
@@ -104,21 +103,11 @@ async def generar_obra(
     await db.commit()
     await db.refresh(nueva)
 
-    return {
-        "mensaje": "Obra generada y guardada",
-        "archivo": imagen_url
-    }
+    return {"mensaje": "Obra generada y guardada", "archivo": image_url}
 
 
-
-
-
-# Endpoint: Obtener obras del usuario autenticado
 @router.get("/mis-obras", response_model=List[ObraOut])
-async def mis_obras(
-    current_user: Usuario = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
+async def mis_obras(current_user: Usuario = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     stmt = (
         select(
             Obra,
@@ -131,30 +120,23 @@ async def mis_obras(
         .where(Obra.autor_id == current_user.id)
         .group_by(Obra.id, Usuario.userName)
     )
-
     result = await db.execute(stmt)
     filas = result.all()
 
     obras = []
     for obra, autor_nombre, promedio, cantidad in filas:
-        promedio_truncado = (
-            floor(promedio * 100) / 100 if promedio is not None else None
-        )
-
-        # 👉 Reemplazamos archivoJPG por URL completa
+        promedio_truncado = floor(promedio * 100) / 100 if promedio is not None else None
         obra_dict = {
             **obra.__dict__,
-            "archivoJPG": f"{API_BASE_URL}/imagenes/{obra.archivoJPG}",
+            "archivoJPG": obra.archivoJPG,
             "autor_nombre": autor_nombre,
             "promedio_valoracion": promedio_truncado,
             "cantidad_valoraciones": cantidad
         }
         obras.append(obra_dict)
-
     return obras
 
 
-# Endpoint: Cambiar visibilidad de una obra
 @router.patch("/{id}/publicar")
 async def cambiar_visibilidad(id: str, body: dict, db: AsyncSession = Depends(get_db), usuario=Depends(get_current_user)):
     query = select(Obra).where(Obra.id == id, Obra.autor_id == usuario.id)
@@ -167,16 +149,11 @@ async def cambiar_visibilidad(id: str, body: dict, db: AsyncSession = Depends(ge
     obra.publicada = body.get("publicada", True)
     await db.commit()
     await db.refresh(obra)
-
     return {"mensaje": "Visibilidad actualizada", "id": obra.id, "publicada": obra.publicada}
 
 
-# Endpoint: Muro público con obras publicadas ordenadas por fecha
 @router.get("/muro", response_model=List[ObraOut])
-async def muro_publico(
-    db: AsyncSession = Depends(get_db),
-    usuario: Optional[Usuario] = Depends(get_current_user_optional)
-):
+async def muro_publico(db: AsyncSession = Depends(get_db), usuario: Optional[Usuario] = Depends(get_current_user_optional)):
     stmt = (
         select(
             Obra,
@@ -190,7 +167,6 @@ async def muro_publico(
         .group_by(Obra.id, Usuario.userName)
         .order_by(Obra.fecha.desc())
     )
-
     result = await db.execute(stmt)
 
     obras = []
@@ -210,13 +186,11 @@ async def muro_publico(
                 ya_valorada = True
                 puntuacion_usuario = valoracion.puntuacion
 
-        promedio_truncado = (
-            floor(promedio * 100) / 100 if promedio is not None else None
-        )
+        promedio_truncado = floor(promedio * 100) / 100 if promedio is not None else None
 
         obras.append({
             **obra.__dict__,
-            "archivoJPG": f"{API_BASE_URL}/imagenes/{obra.archivoJPG}",
+            "archivoJPG": obra.archivoJPG,
             "autor_nombre": autor_nombre,
             "promedio_valoracion": promedio_truncado,
             "cantidad_valoraciones": cantidad,
@@ -227,7 +201,6 @@ async def muro_publico(
     return obras
 
 
-# Endpoint: Eliminar obra
 @router.delete("/{obra_id}")
 async def eliminar_obra(obra_id: str, db: AsyncSession = Depends(get_db), usuario_actual: Usuario = Depends(get_current_user)):
     result = await db.execute(
@@ -236,21 +209,15 @@ async def eliminar_obra(obra_id: str, db: AsyncSession = Depends(get_db), usuari
     obra = result.scalar_one_or_none()
     if not obra:
         raise HTTPException(status_code=404, detail="Obra no encontrada o no autorizada")
+
     await db.delete(obra)
     await db.commit()
     return {"detail": "Obra eliminada"}
 
 
-# Endpoint: Valorar una obra
 @router.post("/{obra_id}/valorar")
-async def valorar_obra(
-    obra_id: str,
-    data: ValoracionRequest,
-    db: AsyncSession = Depends(get_db),
-    usuario_actual: Usuario = Depends(get_current_user)
-):
-    puntuacion = data.puntuacion
-    if puntuacion < 1 or puntuacion > 5:
+async def valorar_obra(obra_id: str, data: ValoracionRequest, db: AsyncSession = Depends(get_db), usuario_actual: Usuario = Depends(get_current_user)):
+    if data.puntuacion < 1 or data.puntuacion > 5:
         raise HTTPException(status_code=400, detail="Puntuación inválida")
 
     result = await db.execute(
@@ -265,7 +232,7 @@ async def valorar_obra(
         raise HTTPException(status_code=400, detail="Ya valoraste esta obra")
 
     nueva_valoracion = Valoracion(
-        puntuacion=puntuacion,
+        puntuacion=data.puntuacion,
         obra_id=obra_id,
         usuario_id=usuario_actual.id
     )
@@ -274,7 +241,6 @@ async def valorar_obra(
     return {"detail": "Valoración registrada"}
 
 
-# Endpoint: Obtener todas las obras ordenadas por fecha
 @router.get("/obras/todas", response_model=List[ObraSimple])
 async def obtener_todas_las_obras(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Obra).order_by(Obra.fecha.desc()))
@@ -282,27 +248,18 @@ async def obtener_todas_las_obras(db: AsyncSession = Depends(get_db)):
     return obras
 
 
-# Endpoint: Servir imágenes desde output con CORS habilitado
 @router.get("/imagenes/{nombre}")
-async def obtener_imagen(nombre: str):
-    BASE_DIR = Path(__file__).resolve().parents[2]
-    file_path = BASE_DIR / "output" / nombre
-
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="Imagen no encontrada")
-
-    return FileResponse(file_path, media_type="image/jpeg", headers={"Access-Control-Allow-Origin": "*"})
+async def redirigir_a_cloudinary(nombre: str):
+    return RedirectResponse(f"https://res.cloudinary.com/{os.getenv('CLOUDINARY_CLOUD_NAME')}/image/upload/artificial/{nombre}")
 
 
 @router.delete("/obras/eliminar-todas")
 async def eliminar_todas_las_obras(db: AsyncSession = Depends(get_db)):
-    # 🔥 Traer todas las obras
     result = await db.execute(select(Obra))
     obras = result.scalars().all()
 
-    # Eliminar una por una
     for obra in obras:
         await db.delete(obra)
-
     await db.commit()
+
     return {"mensaje": f"Se eliminaron {len(obras)} obras correctamente."}

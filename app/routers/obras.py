@@ -3,6 +3,7 @@ import os
 import time
 from typing import List, Optional
 from math import floor
+import traceback
 
 # Imports de terceros
 import cloudinary
@@ -86,7 +87,8 @@ async def generar_obra(
         image_url = result["secure_url"]
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error subiendo a Cloudinary: {e}")
+        traceback.print_exc()  # 🔍 Mostrará error en consola
+        raise HTTPException(status_code=500, detail=f"Error subiendo a Cloudinary: {str(e)}")
 
     if solo_generar:
         return {"mensaje": "Imagen generada temporalmente", "archivo": image_url}

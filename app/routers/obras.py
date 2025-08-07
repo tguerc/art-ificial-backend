@@ -66,19 +66,16 @@ async def generar_obra(
     file_name = f"obra_{timestamp}.jpg"
     file_path = output_dir / file_name
 
-    # Procesar imagen base64 o URL
+    # Descargar o copiar imagen (NO se acepta más base64)
     if obra.imagen and obra.imagen.strip():
-        if obra.imagen.startswith("data:image"):
-            header, b64data = obra.imagen.split(",", 1)
-            image_bytes = base64.b64decode(b64data)
-            with open(file_path, "wb") as f:
-                f.write(image_bytes)
-        elif obra.imagen.startswith("http"):
+        if obra.imagen.startswith("http"):
             response = requests.get(obra.imagen)
             if response.status_code != 200:
                 raise HTTPException(status_code=400, detail="No se pudo descargar la imagen desde la URL")
             with open(file_path, "wb") as f:
                 f.write(response.content)
+        else:
+            raise HTTPException(status_code=400, detail="La imagen debe ser una URL válida")
     else:
         # Usar imagen por defecto
         robot_path = output_dir / "robot.jpg"
@@ -87,22 +84,19 @@ async def generar_obra(
         file_name = "robot.jpg"
         file_path = robot_path
 
-    # URL de retorno
     imagen_url = f"{API_BASE_URL}/imagenes/{file_name}"
 
-    # Si solo querés generar, sin guardar en la DB
     if solo_generar:
         return {
             "mensaje": "Imagen generada temporalmente",
             "archivo": imagen_url
         }
 
-    # Crear entrada en DB
     nueva = Obra(
         nombre=obra.nombre,
         descripcion=obra.descripcion,
         tipoArte=obra.tipoArte,
-        archivoJPG=file_name,  # 👉 Guardamos solo el nombre del archivo
+        archivoJPG=file_name,
         publicada=True,
         autor_id=usuario.id
     )
@@ -114,24 +108,6 @@ async def generar_obra(
         "mensaje": "Obra generada y guardada",
         "archivo": imagen_url
     }
-
-
-
-
-    # Guardar obra en la base de datos
-    nueva = Obra(
-        nombre=obra.nombre,
-        descripcion=obra.descripcion,
-        tipoArte=obra.tipoArte,
-        archivoJPG=archivo,
-        publicada=True,
-        autor_id=usuario.id
-    )
-    db.add(nueva)
-    await db.commit()
-    await db.refresh(nueva)
-
-    return {"mensaje": "Obra generada y guardada", "archivo": f"{API_BASE_URL}{archivo}"}
 
 
 
@@ -161,14 +137,14 @@ async def mis_obras(
 
     obras = []
     for obra, autor_nombre, promedio, cantidad in filas:
-        # 🔥 Truncar a 2 decimales sin redondear
         promedio_truncado = (
             floor(promedio * 100) / 100 if promedio is not None else None
         )
 
+        # 👉 Reemplazamos archivoJPG por URL completa
         obra_dict = {
             **obra.__dict__,
-
+            "archivoJPG": f"{API_BASE_URL}/imagenes/{obra.archivoJPG}",
             "autor_nombre": autor_nombre,
             "promedio_valoracion": promedio_truncado,
             "cantidad_valoraciones": cantidad
@@ -199,7 +175,7 @@ async def cambiar_visibilidad(id: str, body: dict, db: AsyncSession = Depends(ge
 @router.get("/muro", response_model=List[ObraOut])
 async def muro_publico(
     db: AsyncSession = Depends(get_db),
-    usuario: Optional[Usuario] = Depends(get_current_user_optional)  # Usuario opcional
+    usuario: Optional[Usuario] = Depends(get_current_user_optional)
 ):
     stmt = (
         select(
@@ -212,7 +188,7 @@ async def muro_publico(
         .outerjoin(Valoracion, Valoracion.obra_id == Obra.id)
         .where(Obra.publicada == True)
         .group_by(Obra.id, Usuario.userName)
-        .order_by(Obra.fecha.desc())  # Más recientes primero
+        .order_by(Obra.fecha.desc())
     )
 
     result = await db.execute(stmt)
@@ -222,7 +198,6 @@ async def muro_publico(
         ya_valorada = False
         puntuacion_usuario = None
 
-        # Verificar si el usuario autenticado ya valoró
         if usuario:
             valoracion_user = await db.execute(
                 select(Valoracion).where(
@@ -241,7 +216,7 @@ async def muro_publico(
 
         obras.append({
             **obra.__dict__,
-            "archivoJPG": f"{API_BASE_URL}/imagenes/{obra.archivoJPG}",  # 🔥 CORREGIDO
+            "archivoJPG": f"{API_BASE_URL}/imagenes/{obra.archivoJPG}",
             "autor_nombre": autor_nombre,
             "promedio_valoracion": promedio_truncado,
             "cantidad_valoraciones": cantidad,
@@ -317,3 +292,17 @@ async def obtener_imagen(nombre: str):
         raise HTTPException(status_code=404, detail="Imagen no encontrada")
 
     return FileResponse(file_path, media_type="image/jpeg", headers={"Access-Control-Allow-Origin": "*"})
+
+
+@router.delete("/obras/eliminar-todas")
+async def eliminar_todas_las_obras(db: AsyncSession = Depends(get_db)):
+    # 🔥 Traer todas las obras
+    result = await db.execute(select(Obra))
+    obras = result.scalars().all()
+
+    # Eliminar una por una
+    for obra in obras:
+        await db.delete(obra)
+
+    await db.commit()
+    return {"mensaje": f"Se eliminaron {len(obras)} obras correctamente."}

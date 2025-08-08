@@ -4,6 +4,7 @@ import time
 from typing import List, Optional
 from math import floor
 import traceback
+import uuid
 
 # Imports de terceros
 import cloudinary
@@ -80,7 +81,7 @@ async def generar_obra(
             resource_type="image",
             folder="art-ificial",  # opcional
             overwrite=True,
-            public_id=f"obra_{int(time.time())}"
+            public_id=f"obra_{uuid.uuid4().hex}"
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al subir a Cloudinary: {e}")

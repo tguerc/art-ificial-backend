@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+import cloudinary
 
 # Imports internos
 from app.routers import usuarios, obras
@@ -25,6 +26,8 @@ app.include_router(obras.router, prefix="/obras")
 
 # Configurar logging
 logging.basicConfig(level=logging.DEBUG)
+
+cloudinary.config(secure=True)
 
 # Configuración de CORS
 allowed_origins = os.getenv(

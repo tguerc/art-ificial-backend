@@ -17,3 +17,4 @@ alembic
 aiofiles
 pydantic-settings
 cloudinary
+python-3.11.9

@@ -17,4 +17,4 @@ alembic==1.13.2
 aiofiles==24.1.0
 pydantic-settings==2.3.4
 cloudinary==1.41.0
-greenlet==3.0.3   # requerido por SQLAlchemy async
+greenlet==3.0.3

@@ -1,6 +1,7 @@
 # Imports estándar
 import os
 import time
+import asyncio
 from pathlib import Path
 
 # Imports de terceros
@@ -26,27 +27,27 @@ async def generar_imagen(
         "censor_nsfw": False,
     }
 
+    print(f"🚀 Enviando a Stable Horde: {prompt[:50]}...")
+    
     initRes = requests.post(
         "https://stablehorde.net/api/v2/generate/async",
         headers=headers,
         json=payload,
     )
 
-    raw = initRes.text
     if not initRes.ok:
-        raise Exception(f"Stable Horde Error {initRes.status_code}: {raw}")
+        raise Exception(f"Stable Horde Error {initRes.status_code}: {initRes.text}")
 
     request_id = initRes.json()["id"]
     print(f"✅ ID solicitud: {request_id}")
 
     # ⏳ Polling de estado
-    status = None
     max_attempts = 120
     attempt = 0
     
     while attempt < max_attempts:
         attempt += 1
-        time.sleep(3)
+        await asyncio.sleep(3)
         
         pollRes = requests.get(
             f"https://stablehorde.net/api/v2/generate/status/{request_id}",
@@ -61,6 +62,7 @@ async def generar_imagen(
             print(f"🎨 Procesando... {attempt}s")
         
         if status.get("done"):
+            print("✅ ¡Terminado!")
             break
 
     img = status.get("generations", [{}])[0].get("img")
@@ -68,7 +70,7 @@ async def generar_imagen(
         raise Exception("No se generó ninguna imagen en Stable Horde")
 
     if img.startswith("http"):
-        print(f"✅ ¡Listo! {img}")
+        print(f"✅ ¡URL final! {img}")
         return img
 
     raise Exception("Imagen en base64 no soportada")

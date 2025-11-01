@@ -65,28 +65,31 @@ async def generar_obra(
     if usuario is None:
         raise HTTPException(status_code=401, detail="Usuario no autenticado")
 
-    # Validar URL de imagen
-    if not obra.imagen or not obra.imagen.startswith("http"):
-        raise HTTPException(status_code=400, detail="La imagen debe ser una URL válida")
-
-    # Descargar imagen desde URL
-    response = requests.get(obra.imagen)
-    if response.status_code != 200:
-        raise HTTPException(status_code=400, detail="No se pudo descargar la imagen")
-
-    # Subir a Cloudinary
-    try:
-        result = cloudinary.uploader.upload(
-            response.content,
-            resource_type="image",
-            folder="art-ificial",  # opcional
-            overwrite=True,
-            public_id=f"obra_{uuid.uuid4().hex}"
+    # 🤖 Generar con IA si imagen está vacía
+    if not obra.imagen:
+        imagen_url = await generar_imagen(
+            prompt=obra.nombre,
+            model=obra.tipoArte or "stable_diffusion"
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al subir a Cloudinary: {e}")
+    else:
+        # Descargar imagen desde URL
+        response = requests.get(obra.imagen)
+        if response.status_code != 200:
+            raise HTTPException(status_code=400, detail="No se pudo descargar la imagen")
 
-    imagen_url = result["secure_url"]  # ✅ URL pública
+        # Subir a Cloudinary
+        try:
+            result = cloudinary.uploader.upload(
+                response.content,
+                resource_type="image",
+                folder="art-ificial",
+                overwrite=True,
+                public_id=f"obra_{uuid.uuid4().hex}"
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error al subir a Cloudinary: {e}")
+
+        imagen_url = result["secure_url"]
 
     # Si solo quiere generar la imagen y no guardar en DB
     if solo_generar:
@@ -97,7 +100,7 @@ async def generar_obra(
         nombre=obra.nombre,
         descripcion=obra.descripcion,
         tipoArte=obra.tipoArte,
-        archivoJPG=imagen_url,  # 🔥 URL completa
+        archivoJPG=imagen_url,
         publicada=True,
         autor_id=usuario.id
     )
@@ -106,7 +109,6 @@ async def generar_obra(
     await db.refresh(nueva)
 
     return {"mensaje": "Obra generada y guardada", "archivo": imagen_url}
-
 
 @router.get("/mis-obras", response_model=List[ObraOut])
 async def mis_obras(current_user: Usuario = Depends(get_current_user), db: AsyncSession = Depends(get_db)):

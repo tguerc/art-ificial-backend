@@ -1,5 +1,6 @@
 # Imports estándar
 import os
+import time
 from pathlib import Path
 
 # Imports de terceros
@@ -36,11 +37,15 @@ async def generar_imagen(
         raise Exception(f"Stable Horde Error {initRes.status_code}: {raw}")
 
     request_id = initRes.json()["id"]
+    print(f"✅ ID solicitud: {request_id}")
 
     # ⏳ Polling de estado
     status = None
-    while True:
-        import time
+    max_attempts = 120
+    attempt = 0
+    
+    while attempt < max_attempts:
+        attempt += 1
         time.sleep(3)
         
         pollRes = requests.get(
@@ -48,6 +53,12 @@ async def generar_imagen(
             headers=headers,
         )
         status = pollRes.json()
+        
+        if status.get("queue_position"):
+            print(f"📋 Cola: {status['queue_position']}")
+        
+        if status.get("is_processing"):
+            print(f"🎨 Procesando... {attempt}s")
         
         if status.get("done"):
             break
@@ -57,10 +68,7 @@ async def generar_imagen(
         raise Exception("No se generó ninguna imagen en Stable Horde")
 
     if img.startswith("http"):
+        print(f"✅ ¡Listo! {img}")
         return img
 
-    # ⛔ La imagen es base64 → convertir a Blob y subir a tu backend
-    img_response = requests.get(f"data:image/webp;base64,{img}")
-    blob = img_response.content
-    
-    return blob
+    raise Exception("Imagen en base64 no soportada")
